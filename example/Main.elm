@@ -10,13 +10,35 @@ import Json.Encode as Encode
 import Process
 import Task
 
+
+-- PORTS
+
+
 port saveToStorage : Encode.Value -> Cmd msg
 port loadFromStorage : Encode.Value -> Cmd msg
 port removeFromStorage : Encode.Value -> Cmd msg
-
 port receiveStorageResult : (Encode.Value -> msg) -> Sub msg
 
+
+-- STORAGE HELPERS
+
+
+saveToIpe : StorageType -> String -> Encode.Value -> Cmd msg
+saveToIpe storageType key value =
+    Ipe.save storageType key value |> saveToStorage
+
+loadFromIpe : StorageType -> String -> Cmd msg  
+loadFromIpe storageType key =
+    Ipe.load storageType key |> loadFromStorage
+
+removeFromIpe : StorageType -> String -> Cmd msg
+removeFromIpe storageType key =
+    Ipe.remove storageType key |> removeFromStorage
+
+
 -- MODEL
+
+
 type alias Model =
     { userProfile: Maybe UserProfile
     , userNameInput: String
@@ -47,6 +69,8 @@ init _ =
 
 
 -- MESSAGES
+
+
 type Msg
     = UpdateUserName String
     | UpdateUserEmail String
@@ -99,20 +123,20 @@ update msg model =
             in
             ( { model | statusMessage = "Saving profile..." }
             , Cmd.batch
-                [ Ipe.save Local "user-profile" (encodeUserProfile profileToSave)
+                [ saveToIpe Local "user-profile" (encodeUserProfile profileToSave)
                 , Process.sleep 500 |> Task.perform (\_ -> ResetStatus)
                 ]
             )
 
         LoadProfile ->
             ( { model | statusMessage = "Loading profile..." }
-            , Ipe.load Local "user-profile" (\_ -> ResetStatus)
+            , loadFromIpe Local "user-profile"
             )
 
         RemoveProfile ->
             ( { model | statusMessage = "Removing profile..." }
             , Cmd.batch
-                [ Ipe.remove Local "user-profile"
+                [ removeFromIpe Local "user-profile"
                 , Process.sleep 500 |> Task.perform (\_ -> ResetStatus)
                 ]
             )
@@ -120,36 +144,36 @@ update msg model =
         SaveTheme themeName ->
             ( { model | statusMessage = "Saving theme..." }
             , Cmd.batch
-                [ Ipe.save Session "session-theme" (Encode.string themeName)
+                [ saveToIpe Session "session-theme" (Encode.string themeName)
                 , Process.sleep 500 |> Task.perform (\_ -> ResetStatus)
                 ]
             )
 
         LoadTheme ->
             ( { model | statusMessage = "Loading theme..." }
-            , Ipe.load Session "session-theme" (\_ -> ResetStatus)
+            , loadFromIpe Session "session-theme"
             )
 
         RemoveTheme ->
             ( { model | statusMessage = "Removing theme..." }
             , Cmd.batch
-                [ Ipe.remove Session "session-theme"
+                [ removeFromIpe Session "session-theme"
                 , Process.sleep 500 |> Task.perform (\_ -> ResetStatus)
                 ]
             )
 
         LoadNonExistentKey ->
             ( { model | statusMessage = "Trying to load non-existent key..." }
-            , Ipe.load Local "key-that-does-not-exist" (\_ -> ResetStatus)
+            , loadFromIpe Local "key-that-does-not-exist"
             )
 
         TriggerDecodeError ->
             ( { model | statusMessage = "Triggering decode error by loading theme as profile..." }
             , Cmd.batch
                 [ 
-                  Ipe.save Session "test-theme-data" (Encode.string "Dark Theme")
+                  saveToIpe Session "test-theme-data" (Encode.string "Dark Theme")
                 , 
-                  Ipe.load Session "test-theme-data" (\_ -> ResetStatus)
+                  loadFromIpe Session "test-theme-data"
                 ]
             )
 
@@ -169,75 +193,60 @@ handleStorageData : String -> Encode.Value -> Model -> ( Model, Cmd Msg )
 handleStorageData key value model =
     case key of
         "user-profile" ->
-            case Decode.decodeValue (Decode.field "data" (Decode.nullable Decode.value)) value of
-                Ok (Just profileData) ->
-                    case Decode.decodeValue userProfileDecoder profileData of
-                        Ok profile ->
-                            ( { model | userProfile = Just profile, statusMessage = "Profile loaded successfully!", lastError = Nothing }, Cmd.none )
-                        
-                        Err decodeError ->
-                            ( { model | userProfile = Nothing, statusMessage = "Failed to load profile.", lastError = Just ("DecodeError: The found data does not match the expected format. (" ++ Decode.errorToString decodeError ++ ")") }, Cmd.none )
+            case Ipe.decodeStorageResult userProfileDecoder value of
+                Ok profile ->
+                    ( { model | userProfile = Just profile, statusMessage = "Profile loaded successfully!", lastError = Nothing }, Cmd.none )
                 
-                Ok Nothing ->
+                Err (DecodeError decodeError) ->
+                    ( { model | userProfile = Nothing, statusMessage = "Failed to load profile.", lastError = Just ("DecodeError: The found data does not match the expected format. (" ++ Decode.errorToString decodeError ++ ")") }, Cmd.none )
+                
+                Err NotFound ->
                     ( { model | userProfile = Nothing, statusMessage = "Profile not found.", lastError = Just "NotFound: The key was not found in storage." }, Cmd.none )
-                
-                Err _ ->
-                    ( { model | statusMessage = "Failed to process profile data.", lastError = Just "Invalid data format" }, Cmd.none )
 
         "session-theme" ->
-            case Decode.decodeValue (Decode.field "data" (Decode.nullable Decode.string)) value of
-                Ok (Just themeData) ->
+            case Ipe.decodeStorageResult Decode.string value of
+                Ok themeData ->
                     ( { model | theme = Just themeData, statusMessage = "Theme loaded successfully!", lastError = Nothing }, Cmd.none )
                 
-                Ok Nothing ->
+                Err NotFound ->
                     ( { model | theme = Nothing, statusMessage = "Theme not found.", lastError = Just "NotFound: The key was not found in storage." }, Cmd.none )
                 
-                Err decodeError ->
+                Err (DecodeError decodeError) ->
                     ( { model | theme = Nothing, statusMessage = "Failed to load theme.", lastError = Just ("DecodeError: " ++ Decode.errorToString decodeError) }, Cmd.none )
 
         "key-that-does-not-exist" ->
-            case Decode.decodeValue (Decode.field "data" (Decode.nullable Decode.string)) value of
-                Ok Nothing ->
-                    ( { model | statusMessage = "Expected failure when loading key!", lastError = Just "NotFound: The key was not found in storage." }, Cmd.none )
-                
-                Ok (Just foundValue) ->
+            case Ipe.decodeStorageResult Decode.string value of
+                Ok foundValue ->
                     ( { model | statusMessage = "Key loaded: " ++ foundValue, lastError = Nothing }, Cmd.none )
                 
-                Err decodeError ->
+                Err NotFound ->
+                    ( { model | statusMessage = "Expected failure when loading key!", lastError = Just "NotFound: The key was not found in storage." }, Cmd.none )
+                
+                Err (DecodeError decodeError) ->
                     ( { model | statusMessage = "Expected failure when loading key!", lastError = Just ("DecodeError: " ++ Decode.errorToString decodeError) }, Cmd.none )
 
         "bad-data-key" ->
-            case Decode.decodeValue (Decode.field "data" (Decode.nullable Decode.value)) value of
-                Ok (Just badData) ->
-                    case Decode.decodeValue userProfileDecoder badData of
-                        Ok profile ->
-                            ( { model | userProfile = Just profile, statusMessage = "Unexpected success!", lastError = Nothing }, Cmd.none )
-                        
-                        Err decodeError ->
-                            ( { model | statusMessage = "Expected decode error occurred.", lastError = Just ("DecodeError: The found data does not match the expected format. (" ++ Decode.errorToString decodeError ++ ")") }, Cmd.none )
+            case Ipe.decodeStorageResult userProfileDecoder value of
+                Ok profile ->
+                    ( { model | userProfile = Just profile, statusMessage = "Unexpected success!", lastError = Nothing }, Cmd.none )
                 
-                Ok Nothing ->
+                Err (DecodeError decodeError) ->
+                    ( { model | statusMessage = "Expected decode error occurred.", lastError = Just ("DecodeError: The found data does not match the expected format. (" ++ Decode.errorToString decodeError ++ ")") }, Cmd.none )
+                
+                Err NotFound ->
                     ( { model | statusMessage = "Bad data key not found.", lastError = Just "NotFound" }, Cmd.none )
-                
-                Err _ ->
-                    ( { model | statusMessage = "Failed to process bad data.", lastError = Just "Invalid format" }, Cmd.none )
 
         "test-theme-data" ->
-            case Decode.decodeValue (Decode.field "data" (Decode.nullable Decode.value)) value of
-                Ok (Just themeData) ->
-                    -- Intentionally try to decode theme data as a profile to trigger error
-                    case Decode.decodeValue userProfileDecoder themeData of
-                        Ok profile ->
-                            ( { model | userProfile = Just profile, statusMessage = "Unexpected success!", lastError = Nothing }, Cmd.none )
-                        
-                        Err decodeError ->
-                            ( { model | statusMessage = "Expected decode error occurred.", lastError = Just ("DecodeError: Tried to decode theme data as profile. " ++ Decode.errorToString decodeError) }, Cmd.none )
+            -- Intentionally try to decode theme data as a profile to trigger error
+            case Ipe.decodeStorageResult userProfileDecoder value of
+                Ok profile ->
+                    ( { model | userProfile = Just profile, statusMessage = "Unexpected success!", lastError = Nothing }, Cmd.none )
                 
-                Ok Nothing ->
+                Err (DecodeError decodeError) ->
+                    ( { model | statusMessage = "Expected decode error occurred.", lastError = Just ("DecodeError: Tried to decode theme data as profile. " ++ Decode.errorToString decodeError) }, Cmd.none )
+                
+                Err NotFound ->
                     ( { model | statusMessage = "Test theme data not found.", lastError = Just "NotFound" }, Cmd.none )
-                
-                Err _ ->
-                    ( { model | statusMessage = "Failed to process test data.", lastError = Just "Invalid format" }, Cmd.none )
 
         _ ->
             ( { model | statusMessage = "Unknown key received: " ++ key }, Cmd.none )

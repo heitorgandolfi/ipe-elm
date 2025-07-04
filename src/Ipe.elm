@@ -1,11 +1,28 @@
-port module Ipe exposing
+module Ipe exposing
     ( StorageType(..)
     , Error(..)
     , save
     , load
     , remove
-    , storageResults
+    , storageTypeToString
+    , decodeStorageResult
     )
+
+{-| Elegant Storage for Elm
+
+# Storage Types
+@docs StorageType, storageTypeToString
+
+# Error Types  
+@docs Error
+
+# Commands
+@docs save, load, remove
+
+# Decoders
+@docs decodeStorageResult
+
+-}
 
 import Json.Decode as Decode
 import Json.Encode as Encode
@@ -14,11 +31,15 @@ import Json.Encode as Encode
 -- STORAGE TYPES
 
 
+{-| Storage type - Local or Session storage
+-}
 type StorageType
     = Local
     | Session
 
 
+{-| Convert storage type to string for JavaScript interop
+-}
 storageTypeToString : StorageType -> String
 storageTypeToString st =
     case st of
@@ -32,71 +53,71 @@ storageTypeToString st =
 -- ERRORS
 
 
+{-| Storage operation errors
+-}
 type Error
     = DecodeError Decode.Error
     | NotFound
 
 
--- PORTS
+-- COMMAND BUILDERS
 
 
-port saveToStorage : Encode.Value -> Cmd msg
-port loadFromStorage : Encode.Value -> Cmd msg
-port removeFromStorage : Encode.Value -> Cmd msg
-port receiveStorageResult : (Encode.Value -> msg) -> Sub msg
-
-
--- API
-
-
-save : StorageType -> String -> Encode.Value -> Cmd msg
+{-| Create a save command payload
+-}
+save : StorageType -> String -> Encode.Value -> Encode.Value
 save storageType key value =
     Encode.object
         [ ( "storageType", Encode.string (storageTypeToString storageType) )
         , ( "key", Encode.string key )
         , ( "value", value )
         ]
-        |> saveToStorage
 
 
-load : StorageType -> String -> (Result Error Encode.Value -> msg) -> Cmd msg
-load storageType key _ =
-    let
-        payload =
-            Encode.object
-                [ ( "storageType", Encode.string (storageTypeToString storageType) )
-                , ( "key", Encode.string key )
-                ]
-    in
-    loadFromStorage payload
+{-| Create a load command payload
+-}
+load : StorageType -> String -> Encode.Value
+load storageType key =
+    Encode.object
+        [ ( "storageType", Encode.string (storageTypeToString storageType) )
+        , ( "key", Encode.string key )
+        ]
 
 
-remove : StorageType -> String -> Cmd msg
+{-| Create a remove command payload
+-}
+remove : StorageType -> String -> Encode.Value
 remove storageType key =
     Encode.object
         [ ( "storageType", Encode.string (storageTypeToString storageType) )
         , ( "key", Encode.string key )
         ]
-        |> removeFromStorage
 
 
-storageResults : Decode.Decoder a -> (Result Error a -> msg) -> Sub msg
-storageResults decoder toMsg =
+-- DECODERS
+
+
+{-| Decode storage results from JavaScript
+-}
+decodeStorageResult : Decode.Decoder a -> Encode.Value -> Result Error a
+decodeStorageResult decoder value =
     let
         decodeOuterPayload =
             Decode.field "data" (Decode.nullable Decode.value)
-
-        handleResult maybeJson =
+    in
+    case Decode.decodeValue decodeOuterPayload value of
+        Ok maybeJson ->
             case maybeJson of
                 Nothing ->
-                    toMsg (Err NotFound)
+                    Err NotFound
 
                 Just json ->
                     case Decode.decodeValue decoder json of
-                        Ok value ->
-                            toMsg (Ok value)
+                        Ok decodedValue ->
+                            Ok decodedValue
 
                         Err decodeError ->
-                            toMsg (Err (DecodeError decodeError))
-    in
-    receiveStorageResult (Decode.decodeValue decodeOuterPayload >> Result.toMaybe >> Maybe.withDefault Nothing >> handleResult)
+                            Err (DecodeError decodeError)
+
+        Err _ ->
+            Err NotFound
