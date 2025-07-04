@@ -1,5 +1,4 @@
-![image](https://github.com/user-attachments/assets/8a493e37-b180-4092-a9a9-b48c6e0fa232)
-
+# Ipê - Elegant Storage for Elm 🌸
 
 [![Elm Package](https://img.shields.io/badge/elm-package-red.svg)](https://package.elm-lang.org/)
 [![Version](https://img.shields.io/badge/version-1.0.0-yellow.svg)](https://github.com/heitorgandolfi/ipe-elm/releases)
@@ -352,7 +351,5 @@ BSD 3-Clause - see [LICENSE](LICENSE) for details.
 
 ---
 
-<p align="center">
-  <strong>Made with 🌸 by the Elm community</strong><br>
-  <em>Bringing the beauty of Ipê flowers to your Elm applications</em>
-</p>
+Made with 🌸 by the Elm community
+Bringing the beauty of Ipê flowers to your Elm applications
