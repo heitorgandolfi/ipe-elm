@@ -2,3 +2,7 @@ elm-stuff/
 .DS_Store
 dist/
 node_modules/
+example/main.js
+main.js
+Thumbs.db
+*.log
